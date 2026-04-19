@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - role: string (required, 'admin' or 'student')
+    //   - enrolledCourses: list (required)
+    //   - createdAt: string
+    //
+    // Collection: courses
+    // Document ID: {courseId}
+    // Fields:
+    //   - title: string
+    //   - price: number
+    //   - category: string
+    //   ...
+    //
+    // Collection: enrollments
+    // Document ID: {enrollmentId}
+    // Fields:
+    //   - studentUid: string
+    //   - status: string ('pending', 'approved', 'rejected')
+    //   ...
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "palaksomani46@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.role in ['admin', 'student'] &&
+             data.uid == request.auth.uid;
+    }
+
+    function isValidEnrollment(data) {
+      return data.keys().hasAll(['studentUid', 'courseId', 'transactionId', 'status']) &&
+             data.status == 'pending' &&
+             data.studentUid == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+    }
+
+    match /courses/{courseId} {
+      allow read: if true; // Publicly viewable catalog
+      allow write: if isAdmin();
+    }
+
+    match /enrollments/{enrollmentId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.studentUid || isAdmin());
+      allow create: if isAuthenticated() && isValidEnrollment(request.resource.data);
+      allow update: if isAdmin(); // Only admin can approve/reject
+      allow delete: if isAdmin();
+    }
+  }
+}
